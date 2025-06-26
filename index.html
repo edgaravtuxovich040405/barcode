@@ -1,148 +1,133 @@
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Сканер штрихкодов</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f9f9f9;
-      color: #333;
-      text-align: center;
-      margin: 0;
-      padding: 20px;
-    }
-    h1 {
-      margin-bottom: 10px;
-    }
-    #scanner-container {
-      width: 100%;
-      max-width: 600px;
-      margin: auto;
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    video {
-      width: 100%;
-      border-radius: 10px;
-    }
-    #barcode-result {
-      font-size: 1.3em;
-      margin: 15px 0;
-      color: #007bff;
-    }
-    button {
-      margin: 5px;
-      padding: 10px 20px;
-      font-size: 1em;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      background-color: #007bff;
-      color: white;
-    }
-    button:hover {
-      background-color: #0056b3;
-    }
-    ul {
-      list-style: none;
-      padding: 0;
-      max-height: 200px;
-      overflow-y: auto;
-      margin-top: 15px;
-    }
-    li {
-      background: #e9e9e9;
-      margin: 5px;
-      padding: 8px;
-      border-radius: 5px;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Выбор камеры и управление масштабом</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    padding: 1rem;
+  }
+  video {
+    width: 100%;
+    max-width: 400px;
+    border: 1px solid #ccc;
+    margin-bottom: 1rem;
+    transform-origin: center center;
+  }
+  label, select, input {
+    display: block;
+    margin-bottom: 1rem;
+    max-width: 320px;
+  }
+</style>
 </head>
 <body>
 
-  <h1>📦 Сканер штрихкодов</h1>
-  <div id="scanner-container"></div>
-  <div id="barcode-result">Ожидание сканирования...</div>
+<h1>Выбор камеры и управление масштабом</h1>
 
-  <button onclick="restartScanner()">🔁 Сканировать ещё</button>
-  <button onclick="downloadResults()">📥 Скачать результаты</button>
+<label for="camera-select">Выберите камеру:</label>
+<select id="camera-select"></select>
 
-  <ul id="barcode-list"></ul>
+<label for="zoom-range">Масштаб (Zoom): <span id="zoom-value">1</span>x</label>
+<input type="range" id="zoom-range" min="1" max="3" step="0.1" value="1" disabled />
 
-  <!-- Подключение библиотеки Quagga2 -->
-  <script src="https://unpkg.com/@ericblade/quagga2@1.2.6/dist/quagga.min.js"></script>
+<video id="video" autoplay playsinline></video>
 
-  <script>
-    const resultDisplay = document.getElementById("barcode-result");
-    const listDisplay = document.getElementById("barcode-list");
-    let scannedCodes = [];
+<script>
+  const video = document.getElementById('video');
+  const cameraSelect = document.getElementById('camera-select');
+  const zoomRange = document.getElementById('zoom-range');
+  const zoomValue = document.getElementById('zoom-value');
 
-    function startScanner() {
-      Quagga.init({
-        inputStream: {
-          name: "Live",
-          type: "LiveStream",
-          target: document.getElementById('scanner-container'),
-          constraints: {
-            facingMode: "environment"
-          }
-        },
-        decoder: {
-          readers: ["ean_reader", "upc_reader", "code_128_reader"]
-        }
-      }, function(err) {
-        if (err) {
-          console.error(err);
-          resultDisplay.textContent = "Ошибка запуска камеры.";
-          return;
-        }
-        Quagga.start();
+  let currentStream;
+
+  // Получить список камер
+  async function getCameras() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+      cameraSelect.innerHTML = '';
+      videoDevices.forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || `Камера ${index + 1}`;
+        cameraSelect.appendChild(option);
       });
 
-      Quagga.onDetected(onDetected);
+      if (videoDevices.length > 0) {
+        startStream(videoDevices[0].deviceId);
+      }
+    } catch (err) {
+      alert('Ошибка при получении камер: ' + err.message);
+    }
+  }
+
+  // Запустить поток с выбранной камерой
+  async function startStream(deviceId) {
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => track.stop());
     }
 
-    function onDetected(data) {
-      const code = data.codeResult.code;
-      if (!scannedCodes.includes(code)) {
-        scannedCodes.push(code);
-        resultDisplay.textContent = `✅ Найден: ${code}`;
-        const li = document.createElement("li");
-        li.textContent = code;
-        listDisplay.appendChild(li);
+    try {
+      const constraints = {
+        video: {
+          deviceId: { exact: deviceId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      };
+
+      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = currentStream;
+
+      // Проверим поддержку zoom и активируем ползунок, если возможно
+      const [videoTrack] = currentStream.getVideoTracks();
+      const capabilities = videoTrack.getCapabilities();
+
+      if (capabilities.zoom) {
+        zoomRange.min = capabilities.zoom.min;
+        zoomRange.max = capabilities.zoom.max;
+        zoomRange.step = capabilities.zoom.step || 0.1;
+        zoomRange.value = capabilities.zoom.min;
+        zoomRange.disabled = false;
       } else {
-        resultDisplay.textContent = `📌 Уже отсканирован: ${code}`;
+        zoomRange.disabled = true;
+        zoomRange.value = 1;
       }
-
-      Quagga.offDetected(onDetected);
-      Quagga.stop();
+      zoomValue.textContent = zoomRange.value;
+    } catch (err) {
+      alert('Ошибка при запуске камеры: ' + err.message);
     }
+  }
 
-    function restartScanner() {
-      resultDisplay.textContent = "Ожидание сканирования...";
-      Quagga.start();
-      Quagga.onDetected(onDetected);
-    }
+  // При смене камеры
+  cameraSelect.addEventListener('change', () => {
+    startStream(cameraSelect.value);
+  });
 
-    function downloadResults() {
-      if (scannedCodes.length === 0) {
-        alert("Нет данных для сохранения.");
-        return;
-      }
-      const blob = new Blob([scannedCodes.join('\n')], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'barcodes.txt';
-      link.click();
-    }
+  // При изменении зума
+  zoomRange.addEventListener('input', () => {
+    zoomValue.textContent = zoomRange.value;
 
-    // Запуск при загрузке
-    startScanner();
-  </script>
+    if (!currentStream) return;
+
+    const [videoTrack] = currentStream.getVideoTracks();
+    const constraints = {
+      advanced: [{ zoom: zoomRange.value }]
+    };
+
+    videoTrack.applyConstraints(constraints).catch(e => {
+      console.warn('Не удалось применить масштаб:', e);
+      // Если не поддерживается, можно имитировать zoom через CSS:
+      // video.style.transform = `scale(${zoomRange.value})`;
+    });
+  });
+
+  getCameras();
+</script>
 
 </body>
 </html>
